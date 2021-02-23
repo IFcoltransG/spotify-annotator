@@ -10,3 +10,8 @@ Make yourself an unannotated playlist, and select all of the songs in it. (Only 
 Spotify trusts the names, albums and artists of any local song, so you're free to edit those to whatever you want. Even if Spotify thinks it's a song name, any human coming along will know what it really is: a message from you! When you've added notes at crucial points, simply copy and paste the inscrutable links back into a Spotify playlist.
 
 Everything *should* unfold smoothly, but every so often Spotify crashes at that point. Fear not! Just reopen Spotify and try again.
+
+## How will this look?
+Feast your eyes on this, an annotated playlist that resulted from one of the 30-Day Song Challenge variants:
+
+![An example playlist with neat annotations](/example-annotated-playlist.png "Annotated playlist")
