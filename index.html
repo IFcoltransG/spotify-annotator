@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="UTF-8">
+  <title>Spotify Annotator</title>
+  <!--Thank you https://stackoverflow.com/a/62438464-->
+  <link rel="icon"
+    href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2016%2016'%3E%3Ctext%20x='0'%20y='14'%20style='filter:%20invert(100%);'%3E🎼%3C/text%3E%3C/svg%3E"
+    type="image/svg+xml" />
+  <style>
+    * {
+      font-family: Arial, Helvetica, sans-serif;
+    }
+
+    .row {
+      display: flex;
+      flex-flow: row-reverse;
+    }
+
+    .column {
+      width: 50%;
+      height: auto;
+      min-height: 80vmax;
+      padding: 1rem;
+    }
+
+    .input {
+      min-height: 60vh;
+      background-color: #F8F8F8;
+      overflow-x: scroll;
+    }
+
+    .embeds {
+      display: flex;
+      flex-direction: column;
+      width: 80%;
+    }
+
+    .field {
+      font-style: normal;
+      text-decoration: underline;
+      background-color: #F8F8F8;
+      font-size: 1.2em;
+      padding-inline: 0.5rem;
+    }
+
+  </style>
+  <script>
+    //a mapping from Spotify id to a list of embeds for that song
+    //so we don't need to regenerate/reload embeds whenever there is some
+    //small change to the input text
+    //(one song can exist in a playlist multiple times)
+    //cleared whenever the input is entirely empty
+    var embedCache = {};
+
+    //a list of songs currently in the representation of the playlist
+    //that is on display in the output column
+    var nowShowing = [];
+
+    //make a referenced HTML tag object either visible or invisible
+    //(invisible won't affect layout, but its state persists
+    //so embeds won't need to reload when shown again)
+    const hide = tag => tag.hidden = true;
+    const show = tag => tag.hidden = false;
+
+    //turn Spotify unique identifier into an embed for that song
+    //per https://developer.spotify.com/documentation/widgets/generate/embed/
+    const makeEmbed = id => `
+    <iframe src="https://open.spotify.com/embed/track/${id}" width="90%" height="80em" frameborder="0" allowtransparency="true" allow="encrypted-media"></iframe>
+    `
+
+    //add <center> tag around something and style it
+    const center = text => `<center width="90%" height="80em" style="font-style: italic">${text}</center>`
+
+    function localToHTML({ data: [artist, album, track, seconds] }) {
+      //convert an internal representation of a custom local fake song to
+      //the HTML code text for it as editable fields
+      return center(`<span class="field track" contenteditable>${track}</span> by <span class="field artist" contenteditable>${artist}</span> from <span class="field album" contenteditable>${album}</span> (<span class="field seconds" contenteditable>${seconds}</span> seconds)`)
+    }
+
+    //lightly normalise by replacing whitespace with newlines
+    const playlistCleaned = (text) =>
+      text.split(/\s+/).filter(Boolean).join("\n")
+
+    function normalisePlaylist() {
+      //turn input text into a normalised version of it by parsing it,
+      //then replacing old input text with representation of parsed text
+      //(then parse the new input in case anything has changed)
+      updateRightPanel();
+      updateLeftPanel();
+      updateRightPanel();
+    }
+
+    function parseSong(line) {
+      //parse song from Spotify URI or link into an object
+      //containing either unique identifier or custom metadata fields
+      if (line.startsWith("spotify:local:")) {
+        var [spotify, local, artist, album, track, seconds] = line.split(":").map(decodeURIComponent)
+        return { type: "local", data: [artist, album, track, seconds] }
+      }
+      else if (
+        line.startsWith("https://open.spotify.com/")
+        || line.startsWith("spotify:track:")
+      ) {
+        var [end] = line.split(/[:\/]/).slice(-1)
+        return { type: "online", data: end }
+      } else {
+        return { type: "broken", data: line }
+      }
+    }
+
+    //parse list of songs
+    const parsePlaylist = lines => lines.map(parseSong);
+
+    function emptyInput() {
+      //when input is empty, assume that new session is starting
+      //with new playlist, therefore clear cache of old embeds
+      //and display welcome message
+      embedCache = {};
+      nowShowing = [];
+      var outputPanel = document.getElementById("rightPanelList");
+      for (let child of Array.from(outputPanel.children)) {
+        if (child.id === "welcome") {
+          show(child)
+        } else {
+          child.remove()
+        }
+      };
+    }
+
+    function makeTag(htmlCode) {
+      //turn HTML code string into a reference to a tag object
+      var template = document.createElement("template");
+      template.innerHTML = htmlCode.trim();
+      var result = template.content.firstChild;
+      hide(result);
+      document.getElementById("rightPanelList").appendChild(result);
+      return result;
+    }
+
+    function generateTag(song) {
+      //generate the HTML text for a song (embedded Spotify/editable local)
+      if (song.type == "local") {
+        return localToHTML(song);
+      }
+      else if (song.type == "online") {
+        var [end] = song.data.split(/[:\/]/).slice(-1)
+        return makeEmbed(end);
+      } else {
+        return center("MALFORMED CODE");
+      }
+    }
+
+    function checkCache(song, doneAlready) {
+      //if an embed for a song already exists,
+      //move it from cache instead of loading a new one.
+      //(if we need multiple, move multiple from cache)
+      var code = song.data;
+      if (!(code in embedCache)) {
+        embedCache[code] = [];
+      }
+      var duplicatesDone = doneAlready.filter(
+        ({ song: { type, data } }) => type === "online" && data === code
+      ).length;
+      if (embedCache[code][duplicatesDone] === undefined) {
+        embedCache[code][duplicatesDone] = makeTag(generateTag(song));
+      }
+      return embedCache[code][duplicatesDone];
+    }
+
+    function getEmbed(song, doneAlready) {
+      //create or show the tag for a real Spotify song
+      if (song.type == "online") {
+        return checkCache(song, doneAlready);
+      } else {
+        return makeTag(generateTag(song));
+      }
+    }
+
+    function deleteAt(index) {
+      //delete the song at a certain index from playlist
+      nowShowing.splice(index, 1)
+      updateLeftPanel();
+      updateRightPanel();
+    }
+
+    function addAt(index) {
+      //insert a new fake song directly after a certain index in playlist
+      var newSong = { type: "local", data: ["", "", "NAME", "60"] };
+      var newSongAndTag = {
+        song: newSong,
+        tag: makeTag(generateTag(newSong))
+      };
+      nowShowing.splice(index + 1, 0, newSongAndTag)
+      updateLeftPanel();
+      updateRightPanel();
+    }
+
+    function buttons(index) {
+      //create a reference to buttons for adding/removing songs
+      //at a given index in the playlist
+      var rightPanel = document.getElementById("rightPanelList");
+      var container = document.createElement("center");
+      rightPanel.appendChild(container);
+      container.innerHTML = `
+      <button onclick="deleteAt(${index});">Delete</button>
+      <button onclick="addAt(${index});">Insert</button>
+      `
+      return container;
+    }
+
+    function updateEmbeds(songs) {
+      //iterate through songs and display corresponding embeds/editable songs
+      //etc on the output panel
+      var outputPanel = document.getElementById('rightPanelList');
+      for (let tag of Array.from(outputPanel.children)) {
+        hide(tag);
+        nowShowing = [];
+      }
+      for (let i = 0; i < songs.length; i++) {
+        var song = songs[i];
+        var songTag = getEmbed(song, nowShowing);
+        var buttonTag = buttons(i);
+        show(songTag);
+        songTag.style.order = i * 2;
+        buttonTag.style.order = i * 2 + 1;
+        nowShowing.push({ song: song, tag: songTag })
+      }
+    }
+
+    function makeEditable(songs) {
+      //iterate through tags and ensure "local" songs'
+      //editable fields update code's internal representation properly
+      //by adding event listeners
+      for (let { song, tag } of songs) {
+        if (!(song.type === "local")) {
+          throw "only local songs can be editable"
+        }
+        //using let rather than var to avoid overwriting the closure data
+        //in the next loop iteration
+        let artistTag = tag.getElementsByClassName('artist')[0]
+        let albumTag = tag.getElementsByClassName('album')[0]
+        let trackTag = tag.getElementsByClassName('track')[0]
+        let secondsTag = tag.getElementsByClassName('seconds')[0]
+        artistTag.addEventListener(
+          "input",
+          event => {
+            song.data[0] = artistTag.innerText;
+            updateLeftPanel()
+          }
+        )
+        albumTag.addEventListener(
+          "input",
+          event => {
+            song.data[1] = albumTag.innerText;
+            updateLeftPanel()
+          }
+        )
+        trackTag.addEventListener(
+          "input",
+          event => {
+            song.data[2] = trackTag.innerText;
+            updateLeftPanel()
+          }
+        )
+        secondsTag.addEventListener(
+          "input",
+          event => {
+            song.data[3] = secondsTag.innerText;
+            updateLeftPanel()
+          }
+        )
+
+      }
+    }
+
+    function updateLeftPanel() {
+      //replace input box text with a representation of the output tags
+      var newText = nowShowing.map(({ song: { type, data } }) => {
+        switch (type) {
+          case "online":
+            return "https://open.spotify.com/track/" + data;
+            break;
+          case "local":
+            var fixedData = data;
+            fixedData[3] = parseInt(fixedData[3], 10);
+            if (!(fixedData[3] >= 60)) { fixedData[3] = 60; }
+            return "spotify:local:" + fixedData.map(encodeURIComponent).join(":");
+            break;
+          default:
+            return data
+            break;
+        }
+      }).join("\n");
+      document.getElementById('leftPanelInput').innerText = newText;
+    }
+
+    function updateRightPanel() {
+      //parse input box and display corresponding embeds in output
+      var rawText = document.getElementById('leftPanelInput').innerText;
+      var processedText = playlistCleaned(rawText);
+      var lines = processedText.split("\n").filter(Boolean);
+      if (lines.length == 0) {
+        emptyInput();
+        return;
+      }
+      var inputs = parsePlaylist(lines);
+      updateEmbeds(inputs);
+      makeEditable(nowShowing.filter(({ song: { type } }) => type == "local"));
+    }
+
+    //on page load, show welcome message
+    window.onload = emptyInput
+  </script>
+</head>
+
+
+<body>
+  <noscript>This site relies on JavaScript and/or WebAssembly for functionality. Please turn those on.</noscript>
+  <script>
+  </script>
+  <div class="row">
+    <div class="column" id="rightPanel">
+      <div class="embeds" id="rightPanelList">
+        <div id="welcome">
+          Welcome to Spotify Annotator!<p>
+            If you've ever wanted to add notes at various points in a playlist, this tool is for you. It works by adding
+            local
+            songs with custom names &mdash; Spotify doesn't try to check if the songs on your computer are real, so they
+            can have
+            any name you want.
+          <p>
+            To get started, simply highlight all of the songs in a playlist on the desktop app, then paste them into the
+            big
+            friendly box on the left.
+          <p>
+            Then over on this side you'll see an editable representation of your playlist, letting you insert new fake
+            songs into
+            a playlist.
+          <p>
+            Once you're done, just copy and paste the text on the left back into a playlist.
+          <p>
+            Thanks to /u/devnevyn for <a
+              href="https://www.reddit.com/r/spotify/comments/odw8a/spotify_collaborative_playlist_annotation_how/c3j9aaz?utm_source=share&utm_medium=web2x&context=3">
+              this Reddit comment
+            </a>
+            which inspired the tool.
+          <p>
+
+            In other news, this code was written by me (IFcoltransG) without any warranty, and I'm not affiliated with
+            Spotify.
+        </div>
+      </div>
+    </div>
+    <div class="column" id="leftPanel">
+      <div class="input" role="textbox" id="leftPanelInput" contenteditable oninput="updateRightPanel()"
+        onblur="normalisePlaylist()" placeholder="Paste songs here"></div>
+    </div>
+  </div>
+</body>
+
+</html>
