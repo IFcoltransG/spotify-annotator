@@ -1,3 +1,4 @@
+# [MIGRATED TO CODEBERG 2026-10-31](https://codeberg.org/IFcoltransG/spotify-annotator)
 # **BROKEN IN SPOTIFY UPDATE**
 ---
 
